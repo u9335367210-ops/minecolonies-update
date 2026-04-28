@@ -332,7 +332,9 @@ public class PathingStuckHandler<NAV extends PathNavigation & IMinecoloniesNavig
         {
             return;
         }
-        delayToNextUnstuckAction = 50;
+        // Add up to 20 ticks of jitter to the retry delay so simultaneously-stuck citizens do not all
+        // re-trigger expensive pathfinding on the same server tick.
+        delayToNextUnstuckAction = 50 + rand.nextInt(20);
 
         if (stuckLevel < 0)
         {

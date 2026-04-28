@@ -53,7 +53,7 @@ public abstract class AbstractPathJob implements Callable<Path>, IPathJob
     /**
      * Maximium amount of nodes explored
      */
-    public static final int MAX_NODES = 5000;
+    public static final int MAX_NODES = 10000;
 
     /**
      * Start position to path from.

@@ -234,6 +234,14 @@ public abstract class AbstractEntityAIBasic<J extends AbstractJob<?, J>, B exten
 
           new AIEventTarget(AIBlockingEventType.AI_BLOCKING, () -> building.hasCitizenCompletedRequests(worker.getCitizenData()) && this.cleanAsync(), NEEDS_ITEM, 200),
 
+          /*
+            Proactive restock: every ~30 seconds check the worker's inventory for tools that are
+            close to breaking and queue an async backup tool request so the worker is never
+            without a tool when the current one finally breaks. The target's predicate intentionally
+            always returns false so the active state is never changed.
+           */
+          new AIEventTarget(AIBlockingEventType.AI_BLOCKING, () -> true, this::proactiveRestockTick, 600),
+
           new AITarget(NEEDS_ITEM, this::waitForRequests, 40),
           /*
            * Gather a needed item.
@@ -476,6 +484,78 @@ public abstract class AbstractEntityAIBasic<J extends AbstractJob<?, J>, B exten
         updateRenderMetaData();
         return null;
     }
+
+    /**
+     * Proactive restock pass: scans the worker's inventory and queues async backup tool requests for
+     * any tool stack whose damage is above {@link #PROACTIVE_RESTOCK_DAMAGE_RATIO} of its max
+     * durability. This ensures the worker has a replacement tool delivered before the current one
+     * actually breaks, reducing the time spent in NEEDS_ITEM.
+     *
+     * <p>Always returns {@code null} so the AI's active state is unchanged.</p>
+     *
+     * @return null (state is never changed by this target).
+     */
+    @Nullable
+    protected IAIState proactiveRestockTick()
+    {
+        if (worker == null || worker.getCitizenData() == null || building == null)
+        {
+            return null;
+        }
+
+        final InventoryCitizen inv = worker.getInventoryCitizen();
+        for (int slot = 0; slot < inv.getSlots(); slot++)
+        {
+            final ItemStack stack = inv.getStackInSlot(slot);
+            if (stack.isEmpty() || !stack.isDamageableItem() || stack.getMaxDamage() <= 0)
+            {
+                continue;
+            }
+            final double wear = (double) stack.getDamageValue() / (double) stack.getMaxDamage();
+            if (wear < PROACTIVE_RESTOCK_DAMAGE_RATIO)
+            {
+                continue;
+            }
+            final EquipmentTypeEntry type = matchEquipmentType(stack);
+            if (type == null)
+            {
+                continue;
+            }
+            final int currentLevel = Math.max(0, type.getMiningLevel(stack));
+            final int maxLevel = building.getMaxEquipmentLevel();
+            checkForToolOrWeaponAsync(type, Math.min(currentLevel, maxLevel), maxLevel);
+        }
+        return null;
+    }
+
+    /**
+     * Finds an {@link EquipmentTypeEntry} from the registry that classifies the given stack as
+     * equipment. Returns the most specific (non-default) match, or null when no equipment type
+     * applies.
+     */
+    @Nullable
+    private static EquipmentTypeEntry matchEquipmentType(@NotNull final ItemStack stack)
+    {
+        EquipmentTypeEntry best = null;
+        for (final EquipmentTypeEntry entry : ModEquipmentTypes.getRegistry())
+        {
+            if (entry.checkIsEquipment(stack))
+            {
+                // Prefer non-"none" entries: any specific type beats the default.
+                if (best == null || entry.getMiningLevel(stack) > best.getMiningLevel(stack))
+                {
+                    best = entry;
+                }
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Damage ratio (current / max) at which the proactive restock pass starts requesting backup
+     * tools. 0.7 means tools 70% worn or more trigger a pre-emptive replacement order.
+     */
+    private static final double PROACTIVE_RESTOCK_DAMAGE_RATIO = 0.7;
 
     /**
      * Can be overridden in implementations.
@@ -1928,5 +2008,24 @@ public abstract class AbstractEntityAIBasic<J extends AbstractJob<?, J>, B exten
     public boolean canGoIdle()
     {
         return false;
+    }
+
+    /**
+     * Whether the worker currently has any pending tasks queued — open colony-side requests for this
+     * citizen, or completed-but-not-picked-up deliveries waiting at the building. When this returns
+     * {@code true}, {@link com.minecolonies.core.entity.ai.workers.CitizenAI} forces the citizen
+     * back into the WORK state instead of taking leisure time, so workers do not stand idle while
+     * deliveries are queued for them.
+     *
+     * @return true if there is queued work the citizen should attend to.
+     */
+    public boolean hasPendingTasks()
+    {
+        if (worker == null || worker.getCitizenData() == null || building == null)
+        {
+            return false;
+        }
+        return building.hasOpenSyncRequest(worker.getCitizenData())
+                 || building.hasCitizenCompletedRequestsToPickup(worker.getCitizenData());
     }
 }

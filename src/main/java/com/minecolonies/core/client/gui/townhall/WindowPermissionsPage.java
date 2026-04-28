@@ -346,13 +346,9 @@ public class WindowPermissionsPage extends AbstractWindowTownHall
     private void updateRanks()
     {
         rankList.clear();
-        for (final Rank rank : buildingView.getColony().getPermissions().getRanks().values())
-        {
-            if (!rank.equals(buildingView.getColony().getPermissions().getRankOwner()))
-            {
-                rankList.add(rank);
-            }
-        }
+        // Include all ranks (including OWNER) so a player with EDIT_PERMISSIONS can promote
+        // another player to co-owner via the rank dropdown.
+        rankList.addAll(buildingView.getColony().getPermissions().getRanks().values());
         allRankList.clear();
         allRankList.addAll(buildingView.getColony().getPermissions().getRanks().values());
     }
@@ -655,7 +651,9 @@ public class WindowPermissionsPage extends AbstractWindowTownHall
                 Rank rank = player.getRank();
                 rowPane.findPaneOfTypeByID(NAME_LABEL, Text.class).setText(Component.literal(player.getName()));
                 DropDownList dropdown = rowPane.findPaneOfTypeByID(TOWNHALL_RANK_PICKER, DropDownList.class);
-                if (rank.getId() == buildingView.getColony().getPermissions().OWNER_RANK_ID)
+                final boolean isOwner = rank.getId() == buildingView.getColony().getPermissions().OWNER_RANK_ID;
+                final boolean isLastOwner = isOwner && buildingView.getColony().getPermissions().getOwners().size() <= 1;
+                if (isLastOwner)
                 {
                     rowPane.findPaneOfTypeByID(BUTTON_REMOVE_PLAYER, Button.class).setEnabled(false);
                     rowPane.findPaneOfTypeByID("rank", Text.class).setText(Component.literal(rank.getName()));
@@ -733,7 +731,9 @@ public class WindowPermissionsPage extends AbstractWindowTownHall
         if (row >= 0 && row < users.size())
         {
             final ColonyPlayer user = users.get(row);
-            if (user.getRank().getId() != IPermissions.OWNER_RANK_ID)
+            // Allow removing co-owners; the server will refuse to remove the last remaining OWNER.
+            if (user.getRank().getId() != IPermissions.OWNER_RANK_ID
+                  || buildingView.getColony().getPermissions().getOwners().size() > 1)
             {
                 new PermissionsMessage.RemovePlayer(buildingView.getColony(), user.getID()).sendToServer();
             }

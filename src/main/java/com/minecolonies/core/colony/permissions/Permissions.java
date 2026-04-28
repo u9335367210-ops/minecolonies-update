@@ -727,7 +727,35 @@ public class Permissions implements IPermissions
         if (player != null)
         {
             Rank oldRank = player.getRank();
+
+            // Refuse to demote the only remaining OWNER — colony must always have at least one.
+            if (oldRank.getId() == OWNER_RANK_ID && rank.getId() != OWNER_RANK_ID && getOwners().size() <= 1)
+            {
+                return false;
+            }
+
             player.setRank(rank);
+
+            // Keep primary ownerUUID consistent with actual ranks: if we just demoted the primary owner,
+            // promote another remaining OWNER to primary; if we just promoted a player to OWNER and
+            // there is no valid primary owner yet, promote them.
+            if (oldRank.getId() == OWNER_RANK_ID && rank.getId() != OWNER_RANK_ID && id.equals(ownerUUID))
+            {
+                for (final Map.Entry<UUID, ColonyPlayer> entry : players.entrySet())
+                {
+                    if (!entry.getKey().equals(id) && entry.getValue().getRank().getId() == OWNER_RANK_ID)
+                    {
+                        ownerUUID = entry.getKey();
+                        ownerName = entry.getValue().getName();
+                        break;
+                    }
+                }
+            }
+            else if (rank.getId() == OWNER_RANK_ID && (ownerUUID == null || getRank(ownerUUID).getId() != OWNER_RANK_ID))
+            {
+                ownerUUID = id;
+                ownerName = player.getName();
+            }
 
             if (rank.isColonyManager())
             {
@@ -875,7 +903,35 @@ public class Permissions implements IPermissions
     public boolean removePlayer(final UUID id)
     {
         final ColonyPlayer player = players.get(id);
-        if (player != null && player.getRank().getId() != OWNER_RANK_ID && players.remove(id) != null)
+        if (player == null)
+        {
+            return false;
+        }
+
+        if (player.getRank().getId() == OWNER_RANK_ID)
+        {
+            // refuse to remove the last remaining OWNER — colony must always have at least one
+            if (getOwners().size() <= 1)
+            {
+                return false;
+            }
+            // if we're removing the player tracked by ownerUUID (the "primary"),
+            // promote another remaining OWNER to be the primary so save data stays consistent
+            if (id.equals(ownerUUID))
+            {
+                for (final Map.Entry<UUID, ColonyPlayer> entry : players.entrySet())
+                {
+                    if (!entry.getKey().equals(id) && entry.getValue().getRank().getId() == OWNER_RANK_ID)
+                    {
+                        ownerUUID = entry.getKey();
+                        ownerName = entry.getValue().getName();
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (players.remove(id) != null)
         {
             checkFullyAbandoned();
             markDirty();
