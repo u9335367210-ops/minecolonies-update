@@ -234,6 +234,16 @@ public final class NbtTagConstants
     public static final String TAG_AUTO_DELETE = "autoDelete";
 
     /**
+     * Tag flagging a colony as NPC-managed (no human owner; auto-grows over time).
+     */
+    public static final String TAG_NPC_MANAGED = "npcManaged";
+
+    /**
+     * Accumulated NPC auto-builder growth points for an NPC-managed colony.
+     */
+    public static final String TAG_NPC_GROWTH_POINTS = "npcGrowthPoints";
+
+    /**
      * The tag to store the requester Id of the Building.
      */
     public static final String TAG_REQUESTOR_ID = "Requestor";

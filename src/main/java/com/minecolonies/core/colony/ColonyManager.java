@@ -125,8 +125,13 @@ public final class ColonyManager implements IColonyManager
         colony.setName(colonyName);
         colony.getPermissions().setOwner(player);
 
-        colony.getPackageManager().addImportantColonyPlayer((ServerPlayer) player);
-        colony.getPackageManager().addCloseSubscriber((ServerPlayer) player);
+        // Skip subscriber registration for fake-player owners (NPC-managed colonies). The package
+        // manager already rejects fake players with a warning; bypassing the call avoids the noise.
+        if (!(player instanceof net.neoforged.neoforge.common.util.FakePlayer))
+        {
+            colony.getPackageManager().addImportantColonyPlayer((ServerPlayer) player);
+            colony.getPackageManager().addCloseSubscriber((ServerPlayer) player);
+        }
 
         Log.getLogger().info(String.format("New Colony Id: %d by %s", colony.getID(), player.getName().getString()));
 

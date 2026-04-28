@@ -244,6 +244,33 @@ public class Colony implements IColony
     private boolean canColonyBeAutoDeleted = true;
 
     /**
+     * Whether this colony is managed by an NPC mayor (no human owner). NPC-managed colonies grow
+     * automatically over time using a built-in auto-builder; players are added as Officers but cannot
+     * direct workers manually unless granted EDIT permissions by the system.
+     */
+    private boolean npcManaged = false;
+
+    /**
+     * Accumulated growth points for the NPC auto-builder. Increments while at least one player is
+     * within the simulation distance of the colony center (so the colony does not progress when no
+     * one is around to observe it). When it crosses {@link #NPC_UPGRADE_THRESHOLD} an upgrade is
+     * triggered and the counter resets.
+     */
+    private double npcGrowthPoints = 0.0;
+
+    /**
+     * Growth threshold for one upgrade tick of an NPC-managed colony. ~5 minutes of real time at
+     * 20 TPS with the default rate ({@link #NPC_GROWTH_PER_TICK}).
+     */
+    public static final double NPC_UPGRADE_THRESHOLD = 6000.0;
+
+    /**
+     * Per-tick growth rate (in points) for an NPC-managed colony. Multiplied by 1 + 0.1 * citizens
+     * in the auto-builder so larger colonies grow faster.
+     */
+    public static final double NPC_GROWTH_PER_TICK = 1.0;
+
+    /**
      * Variable to determine if its currently day or night.
      */
     private boolean isDay = true;
@@ -499,6 +526,7 @@ public class Colony implements IColony
         graveManager.onColonyTick(this);
         reproductionManager.onColonyTick(this);
         questManager.onColonyTick();
+        com.minecolonies.core.colony.npc.NpcColonyGrowthTicker.onColonyTick(this);
 
         final long currTime = System.currentTimeMillis();
         if (lastOnlineTime != 0)
@@ -825,6 +853,12 @@ public class Colony implements IColony
 
         raidManager.read(compound);
 
+        if (compound.contains(NbtTagConstants.TAG_NPC_MANAGED))
+        {
+            this.npcManaged = compound.getBoolean(NbtTagConstants.TAG_NPC_MANAGED);
+            this.npcGrowthPoints = compound.getDouble(NbtTagConstants.TAG_NPC_GROWTH_POINTS);
+        }
+
         if (compound.contains(TAG_AUTO_DELETE))
         {
             this.canColonyBeAutoDeleted = compound.getBoolean(TAG_AUTO_DELETE);
@@ -989,6 +1023,8 @@ public class Colony implements IColony
         compound.put(TAG_REQUESTMANAGER, getRequestManager().serializeNBT(provider));
         compound.putString(TAG_PACK, pack);
         compound.putBoolean(TAG_AUTO_DELETE, canColonyBeAutoDeleted);
+        compound.putBoolean(NbtTagConstants.TAG_NPC_MANAGED, npcManaged);
+        compound.putDouble(NbtTagConstants.TAG_NPC_GROWTH_POINTS, npcGrowthPoints);
         compound.putInt(TAG_TEAM_COLOR, colonyTeamColor.ordinal());
         compound.put(TAG_FLAG_PATTERNS, Utils.serializeCodecMess(BannerPatternLayers.CODEC, provider, colonyFlag));
         compound.putLong(TAG_LAST_ONLINE, lastOnlineTime);
@@ -1483,6 +1519,59 @@ public class Colony implements IColony
     public void setCanBeAutoDeleted(final boolean canBeDeleted)
     {
         this.canColonyBeAutoDeleted = canBeDeleted;
+        this.markDirty();
+    }
+
+    /**
+     * @return true if this colony is NPC-managed (no human owner; auto-grows over time).
+     */
+    public boolean isNpcManaged()
+    {
+        return npcManaged;
+    }
+
+    /**
+     * Marks the colony as NPC-managed. NPC-managed colonies are excluded from auto-deletion and
+     * receive periodic growth via {@link com.minecolonies.core.colony.npc.NpcColonyGrowthTicker}.
+     *
+     * @param npcManaged whether the colony is NPC-managed
+     */
+    public void setNpcManaged(final boolean npcManaged)
+    {
+        this.npcManaged = npcManaged;
+        if (npcManaged)
+        {
+            // NPC colonies must not be culled by inactivity since they have no human owner to log in.
+            this.canColonyBeAutoDeleted = false;
+        }
+        this.markDirty();
+    }
+
+    /**
+     * @return current accumulated NPC growth points (0 when not npc-managed).
+     */
+    public double getNpcGrowthPoints()
+    {
+        return npcGrowthPoints;
+    }
+
+    /**
+     * Adds growth points to the NPC counter. Intended to be called from the NPC tick handler.
+     *
+     * @param amount points to add (typically {@link #NPC_GROWTH_PER_TICK} scaled by citizens).
+     */
+    public void addNpcGrowthPoints(final double amount)
+    {
+        this.npcGrowthPoints += amount;
+        this.markDirty();
+    }
+
+    /**
+     * Resets the NPC growth counter back to zero (call after an upgrade has been applied).
+     */
+    public void resetNpcGrowthPoints()
+    {
+        this.npcGrowthPoints = 0.0;
         this.markDirty();
     }
 
