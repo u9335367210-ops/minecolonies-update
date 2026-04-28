@@ -118,13 +118,16 @@ public final class NpcColonyGrowthTicker
     }
 
     /**
-     * Replace the trailing level digits of a MineColonies blueprint path with the new level.
+     * Replace the trailing level digits of a MineColonies blueprint path with the new level. The
+     * input may include a trailing {@code .blueprint} extension; if present, it is stripped before
+     * digit detection and re-appended on the result so callers do not have to normalise.
      * Examples:
-     *   "fisher/fisher1" + 2 -> "fisher/fisher2"
-     *   "town/townhall1" + 3 -> "town/townhall3"
-     *   "library4"       + 5 -> "library5"
+     *   "fisher/fisher1"            + 2 -> "fisher/fisher2"
+     *   "town/townhall1"            + 3 -> "town/townhall3"
+     *   "library4"                  + 5 -> "library5"
+     *   "fundamentals/townhall1.blueprint" + 2 -> "fundamentals/townhall2.blueprint"
      *
-     * @return the new path, or null when the input does not end with digits.
+     * @return the new path, or null when the (extension-stripped) input does not end with digits.
      */
     static String bumpBlueprintLevel(final String path, final int newLevel)
     {
@@ -132,9 +135,12 @@ public final class NpcColonyGrowthTicker
         {
             return null;
         }
-        int end = path.length();
+        final String suffix = ".blueprint";
+        final boolean hasExt = path.endsWith(suffix);
+        final String base = hasExt ? path.substring(0, path.length() - suffix.length()) : path;
+        int end = base.length();
         int start = end;
-        while (start > 0 && Character.isDigit(path.charAt(start - 1)))
+        while (start > 0 && Character.isDigit(base.charAt(start - 1)))
         {
             start--;
         }
@@ -142,6 +148,7 @@ public final class NpcColonyGrowthTicker
         {
             return null;
         }
-        return path.substring(0, start) + newLevel;
+        final String bumped = base.substring(0, start) + newLevel;
+        return hasExt ? bumped + suffix : bumped;
     }
 }
