@@ -336,10 +336,20 @@ public class PermissionsMessage
         protected void onExecute(final IPayloadContext ctxIn, final ServerPlayer player, final IColony colony)
         {
             final Rank rank = colony.getPermissions().getRanks().get(rankId);
-            if (colony.getPermissions().hasPermission(player, Action.EDIT_PERMISSIONS) && rank != colony.getPermissions().getRankOwner())
+            if (rank == null || !colony.getPermissions().hasPermission(player, Action.EDIT_PERMISSIONS))
             {
-                colony.getPermissions().setPlayerRank(playerID, rank, colony.getWorld());
+                return;
             }
+
+            // Only an existing OWNER may promote another player to OWNER (prevent privilege escalation
+            // via custom ranks that grant EDIT_PERMISSIONS but are not OWNER).
+            if (rank.getId() == IPermissions.OWNER_RANK_ID
+                  && colony.getPermissions().getRank(player).getId() != IPermissions.OWNER_RANK_ID)
+            {
+                return;
+            }
+
+            colony.getPermissions().setPlayerRank(playerID, rank, colony.getWorld());
         }
 
         @Override

@@ -132,6 +132,27 @@ public interface IPermissions
     UUID getOwner();
 
     /**
+     * Returns the set of all UUIDs currently holding the OWNER rank in this colony.
+     * The colony always has at least one OWNER (the "primary" returned by {@link #getOwner()}).
+     * Multiple players may hold the OWNER rank simultaneously (co-owners) — they have identical permissions.
+     *
+     * @return set of owner UUIDs (never empty for an active colony).
+     */
+    @NotNull
+    default Set<UUID> getOwners()
+    {
+        final Set<UUID> result = new java.util.HashSet<>();
+        for (final Map.Entry<UUID, ColonyPlayer> entry : getPlayers().entrySet())
+        {
+            if (entry.getValue().getRank().getId() == OWNER_RANK_ID)
+            {
+                result.add(entry.getKey());
+            }
+        }
+        return result;
+    }
+
+    /**
      * Returns an unmodifiable map of the players list.
      *
      * @return map of UUIDs and player objects.
