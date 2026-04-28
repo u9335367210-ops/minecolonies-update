@@ -1,11 +1,14 @@
 package com.minecolonies.core.colony.npc;
 
+import com.ldtteam.structurize.api.RotationMirror;
 import com.ldtteam.structurize.storage.StructurePacks;
 import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.api.util.CreativeBuildingStructureHandler;
 import com.minecolonies.api.util.Log;
 import com.minecolonies.core.colony.Colony;
+import net.minecraft.core.BlockPos;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,7 +25,41 @@ import java.util.List;
  */
 public final class NpcColonyGrowthTicker
 {
+    /**
+     * Building expansion plan for an NPC-managed colony. Each entry is a {@link PlannedBuilding}
+     * describing a level-1 blueprint to creative-place at a fixed offset from the town-hall.
+     *
+     * <p>Order matters — earlier entries are placed first. Citizens auto-hire to these buildings
+     * because the colony's town-hall has {@code AUTO_HIRING_MODE} and {@code AUTO_HOUSING_MODE}
+     * defaulted to true (see {@link com.minecolonies.core.colony.buildings.modules.BuildingModules}),
+     * so as soon as a worker hut exists an unemployed citizen will start working there.</p>
+     */
+    static final List<PlannedBuilding> EXPANSION_PLAN = List.of(
+      // Extra housing first so the townhall's citizen cap actually fills up.
+      new PlannedBuilding("fundamentals/residence1.blueprint", -25, 0),
+      // Builder is needed for any future player-driven build orders.
+      new PlannedBuilding("fundamentals/builder1.blueprint",   25, 0),
+      // Cook feeds workers so they don't starve.
+      new PlannedBuilding("fundamentals/cook1.blueprint",       0, -25),
+      // Wood + stone production.
+      new PlannedBuilding("fundamentals/lumberjack1.blueprint", 0, 25),
+      new PlannedBuilding("fundamentals/miner1.blueprint",    -25, -25),
+      // More residences for population growth.
+      new PlannedBuilding("fundamentals/residence1.blueprint", 25, 25),
+      new PlannedBuilding("fundamentals/residence1.blueprint",-25, 25),
+      new PlannedBuilding("fundamentals/residence1.blueprint", 25, -25)
+    );
+
     private NpcColonyGrowthTicker() {}
+
+    /**
+     * Static record describing one planned building in {@link #EXPANSION_PLAN}.
+     *
+     * @param blueprintPath path of the level-1 blueprint, e.g. {@code "fundamentals/builder1.blueprint"}.
+     * @param dx            X-offset from the colony's town-hall position.
+     * @param dz            Z-offset from the colony's town-hall position.
+     */
+    record PlannedBuilding(String blueprintPath, int dx, int dz) {}
 
     /**
      * Advances NPC growth for the given colony by exactly one server tick. Safe no-op when the colony
@@ -46,24 +83,104 @@ public final class NpcColonyGrowthTicker
             return;
         }
 
-        // Upgrade one building (lowest level first, ties broken by closest to town hall).
-        final IBuilding target = pickUpgradeTarget(colony);
-        if (target == null)
+        // Each growth cycle does up to two things: expand the colony footprint (place the next
+        // planned worker hut) AND upgrade an existing building. Doing both keeps the colony
+        // visibly progressing on every cycle and means citizens get jobs much sooner than if we
+        // had to fully exhaust the expansion plan before any townhall upgrades happened.
+        boolean didSomething = false;
+
+        final PlannedBuilding next = pickNextPlannedBuilding(colony);
+        if (next != null)
         {
-            // nothing to upgrade right now (all buildings maxed). Drain points so we don't spam.
-            colony.resetNpcGrowthPoints();
-            return;
+            didSomething |= placePlannedBuilding(colony, next);
         }
 
-        if (forcePlaceNextLevel(colony, target))
+        final IBuilding target = pickUpgradeTarget(colony);
+        if (target != null)
+        {
+            didSomething |= forcePlaceNextLevel(colony, target);
+        }
+
+        if (didSomething)
         {
             colony.resetNpcGrowthPoints();
         }
         else
         {
-            // Placement failed (e.g. blueprint missing). Halve points to avoid retry storm.
+            // Nothing to do (plan exhausted and every building maxed) or both attempts failed.
+            // Halve the points so we don't immediately retry next tick but also don't drain to
+            // zero in case the world state changes (chunks load in, etc.).
             colony.addNpcGrowthPoints(-Colony.NPC_UPGRADE_THRESHOLD / 2.0);
         }
+    }
+
+    /**
+     * Returns the first {@link PlannedBuilding} in {@link #EXPANSION_PLAN} whose target world
+     * position does not yet contain a registered colony building, or {@code null} when every
+     * planned slot is already filled.
+     */
+    @Nullable
+    private static PlannedBuilding pickNextPlannedBuilding(@NotNull final Colony colony)
+    {
+        for (final PlannedBuilding candidate : EXPANSION_PLAN)
+        {
+            final BlockPos target = colony.getCenter().offset(candidate.dx(), 0, candidate.dz());
+            if (colony.getServerBuildingManager().getBuilding(target) != null)
+            {
+                continue;
+            }
+            return candidate;
+        }
+        return null;
+    }
+
+    /**
+     * Creative-place the given planned building's level-1 blueprint at its target offset. The
+     * placement uses the same fancy-placement pipeline as a regular builder finishing a build,
+     * so the inner hut block is automatically registered with the colony via
+     * {@code AbstractColonyBlock.setPlacedBy → addNewBuilding}.
+     */
+    private static boolean placePlannedBuilding(@NotNull final Colony colony, @NotNull final PlannedBuilding planned)
+    {
+        final BlockPos target = colony.getCenter().offset(planned.dx(), 0, planned.dz());
+        final String pack = pickStructurePack(colony);
+        try
+        {
+            CreativeBuildingStructureHandler.loadAndPlaceStructureWithRotation(
+              colony.getWorld(),
+              StructurePacks.getBlueprintFuture(pack, planned.blueprintPath(), colony.getWorld().registryAccess()),
+              target,
+              RotationMirror.NONE,
+              true,
+              null);
+            Log.getLogger().info("[NPC] queued expansion blueprint {} at {} for colony {}",
+              planned.blueprintPath(), target, colony.getID());
+            return true;
+        }
+        catch (final Exception e)
+        {
+            Log.getLogger().warn("[NPC] failed to place expansion blueprint '{}' at {}: {}",
+              planned.blueprintPath(), target, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Pick a structure pack to use for expansion blueprints. Prefer the pack of an existing
+     * building (so all huts in a colony stay visually consistent); fall back to {@code Default}
+     * if no building has a pack set.
+     */
+    private static String pickStructurePack(@NotNull final Colony colony)
+    {
+        for (final IBuilding b : colony.getServerBuildingManager().getBuildings().values())
+        {
+            final String p = b.getStructurePack();
+            if (p != null && !p.isEmpty())
+            {
+                return p;
+            }
+        }
+        return "Default";
     }
 
     private static IBuilding pickUpgradeTarget(@NotNull final Colony colony)
