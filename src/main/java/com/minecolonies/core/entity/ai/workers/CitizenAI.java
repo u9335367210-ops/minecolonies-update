@@ -249,9 +249,11 @@ public class CitizenAI implements IStateAI
         }
 
         if (citizen.getCitizenJobHandler().getColonyJob() != null
-            && citizen.getCitizenJobHandler().getColonyJob().getWorkerAI() instanceof AbstractEntityAIBasic<?,?> abstractEntityAIBasic && !abstractEntityAIBasic.canGoIdle()
+            && citizen.getCitizenJobHandler().getColonyJob().getWorkerAI() instanceof AbstractEntityAIBasic<?,?> abstractEntityAIBasic
+            && (!abstractEntityAIBasic.canGoIdle() || abstractEntityAIBasic.hasPendingTasks())
             && (citizen.getCitizenData().getLeisureTime() <= 0
-            || !citizen.getCitizenData().getJob().canAIBeInterrupted()))
+            || !citizen.getCitizenData().getJob().canAIBeInterrupted()
+            || abstractEntityAIBasic.hasPendingTasks()))
         {
             citizen.setVisibleStatusIfNone(WORKING);
             return CitizenAIState.WORK;
