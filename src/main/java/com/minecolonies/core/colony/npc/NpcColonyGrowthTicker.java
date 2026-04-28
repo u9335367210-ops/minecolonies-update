@@ -1,6 +1,7 @@
 package com.minecolonies.core.colony.npc;
 
 import com.ldtteam.structurize.api.RotationMirror;
+import com.ldtteam.structurize.blueprints.v1.Blueprint;
 import com.ldtteam.structurize.storage.StructurePacks;
 import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.api.util.CreativeBuildingStructureHandler;
@@ -146,13 +147,23 @@ public final class NpcColonyGrowthTicker
         final String pack = pickStructurePack(colony);
         try
         {
-            CreativeBuildingStructureHandler.loadAndPlaceStructureWithRotation(
+            // loadAndPlaceStructureWithRotation internally swallows IllegalStateException and
+            // returns null when the blueprint cannot be loaded — we MUST inspect the return
+            // value or we will report success and reset growth points for a no-op placement,
+            // permanently jamming the expansion plan on the failing entry.
+            final Blueprint result = CreativeBuildingStructureHandler.loadAndPlaceStructureWithRotation(
               colony.getWorld(),
               StructurePacks.getBlueprintFuture(pack, planned.blueprintPath(), colony.getWorld().registryAccess()),
               target,
               RotationMirror.NONE,
               true,
               null);
+            if (result == null)
+            {
+                Log.getLogger().warn("[NPC] blueprint load returned null for '{}' at {} (pack '{}')",
+                  planned.blueprintPath(), target, pack);
+                return false;
+            }
             Log.getLogger().info("[NPC] queued expansion blueprint {} at {} for colony {}",
               planned.blueprintPath(), target, colony.getID());
             return true;
@@ -215,13 +226,20 @@ public final class NpcColonyGrowthTicker
 
         try
         {
-            CreativeBuildingStructureHandler.loadAndPlaceStructureWithRotation(
+            final Blueprint result = CreativeBuildingStructureHandler.loadAndPlaceStructureWithRotation(
               colony.getWorld(),
               StructurePacks.getBlueprintFuture(building.getStructurePack(), newPath, colony.getWorld().registryAccess()),
               building.getID(),
               building.getRotationMirror(),
               true,
               null);
+            if (result == null)
+            {
+                // Same null-on-failure contract as in placePlannedBuilding — do not advance the
+                // building's level/path if the blueprint never actually got queued for placement.
+                Log.getLogger().warn("[NPC] blueprint load returned null for upgrade {} -> {}", currentPath, newPath);
+                return false;
+            }
             building.setBlueprintPath(newPath);
             building.setBuildingLevel(newLevel);
             building.markDirty();
